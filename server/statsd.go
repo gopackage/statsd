@@ -3,18 +3,29 @@ package server
 import (
 	"io"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/apex/log"
+	"github.com/gopackage/statsd/stats"
 )
 
 func New() *Engine {
-	return &Engine{}
+	return &Engine{
+		counters: make(map[string]*stats.Counter),
+		timers: make(map[string]*stats.Timer),
+		gauges: make(map[string]*stats.Gauge),
+		sets: make(map[string]*stats.Set),
+	}
 }
 
 // Engine implements the entire statsd server.
 type Engine struct {
 	conn *net.UDPConn
+	counters map[string]*stats.Counter
+	timers map[string]*stats.Timer
+	gauges map[string]*stats.Gauge
+	sets map[string]*stats.Set
 }
 
 // Start begins accepting UDP stats packets from the network.
@@ -79,9 +90,53 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 
 		switch kind {
 		case "c":
+			c, ok := e.counters[name]
+			if !ok {
+				c = stats.NewCounter(name)
+				e.counters[name] = c
+			}
+			value, err := strconv.Atoi(value)
+			if err != nil {
+				l.WithError(err).Info("could not parse value")
+				continue
+			}
+			c.Add(int64(value))
 		case "ms":
+			t, ok := e.timers[name]
+			if !ok {
+				t = stats.NewTimer(name)
+				e.timers[name] = t
+			}
+			value, err := strconv.Atoi(value)
+			if err != nil {
+				l.WithError(err).Info("could not parse value")
+				continue
+			}
+			t.Set(int64(value))
 		case "g":
+			g, ok := e.gauges[name]
+			if !ok {
+				g = stats.NewGauge(name)
+				e.gauges[name] = g
+			}
+			value, err := strconv.Atoi(value)
+			if err != nil {
+				l.WithError(err).Info("could not parse value")
+				continue
+			}
+			g.Set(int64(value))
 		case "s":
+			s, ok := e.sets[name]
+			if !ok {
+				s = stats.NewSet(name)
+				e.sets[name] = s
+			}
+			value, err := strconv.Atoi(value)
+			if err != nil {
+				l.WithError(err).Info("could not parse value")
+				continue
+			}
+			s.Add(int64(value))
 		default:
 			l.WithField("type", kind).Info("unknown type")
 		}
