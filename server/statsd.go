@@ -26,6 +26,7 @@ type Engine struct {
 	timers map[string]*stats.Timer
 	gauges map[string]*stats.Gauge
 	sets map[string]*stats.Set
+	resp *Resp
 }
 
 // Start begins accepting UDP stats packets from the network.
@@ -41,6 +42,11 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 		return err
 	}
 	log.Info("Connected")
+
+	if len(respAddr) > 0 {
+		e.resp = NewResp(respAddr, e)
+		go e.resp.Start()
+	}
 
 	e.conn = conn
 	buffer := make([]byte, 512)
@@ -90,11 +96,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 
 		switch kind {
 		case "c":
-			c, ok := e.counters[name]
-			if !ok {
-				c = stats.NewCounter(name)
-				e.counters[name] = c
-			}
+			c := e.Counter(name)
 			value, err := strconv.Atoi(value)
 			if err != nil {
 				l.WithError(err).Info("could not parse value")
@@ -102,11 +104,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 			}
 			c.Add(int64(value))
 		case "ms":
-			t, ok := e.timers[name]
-			if !ok {
-				t = stats.NewTimer(name)
-				e.timers[name] = t
-			}
+			t := e.Timer(name)
 			value, err := strconv.Atoi(value)
 			if err != nil {
 				l.WithError(err).Info("could not parse value")
@@ -114,11 +112,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 			}
 			t.Set(int64(value))
 		case "g":
-			g, ok := e.gauges[name]
-			if !ok {
-				g = stats.NewGauge(name)
-				e.gauges[name] = g
-			}
+			g := e.Gauge(name)
 			value, err := strconv.Atoi(value)
 			if err != nil {
 				l.WithError(err).Info("could not parse value")
@@ -126,11 +120,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 			}
 			g.Set(int64(value))
 		case "s":
-			s, ok := e.sets[name]
-			if !ok {
-				s = stats.NewSet(name)
-				e.sets[name] = s
-			}
+			s := e.Set(name)
 			value, err := strconv.Atoi(value)
 			if err != nil {
 				l.WithError(err).Info("could not parse value")
@@ -141,4 +131,60 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 			l.WithField("type", kind).Info("unknown type")
 		}
 	}
+}
+
+func (e *Engine) HasCounter(name string) bool {
+	_, ok := e.counters[name]
+	return ok
+}
+
+func (e *Engine) Counter(name string) *stats.Counter {
+	c, ok := e.counters[name]
+	if !ok {
+		c = stats.NewCounter(name)
+		e.counters[name] = c
+	}
+	return c
+}
+
+func (e *Engine) HasTimer(name string) bool {
+	_, ok := e.timers[name]
+	return ok
+}
+
+func (e *Engine) Timer(name string) *stats.Timer {
+	t, ok := e.timers[name]
+	if !ok {
+		t = stats.NewTimer(name)
+		e.timers[name] = t
+	}
+	return t
+}
+
+func (e *Engine) HasGauge(name string) bool {
+	_, ok := e.gauges[name]
+	return ok
+}
+
+func (e *Engine) Gauge(name string) *stats.Gauge {
+	g, ok := e.gauges[name]
+	if !ok {
+		g = stats.NewGauge(name)
+		e.gauges[name] = g
+	}
+	return g
+}
+
+func (e *Engine) HasSet(name string) bool {
+	_, ok := e.sets[name]
+	return ok
+}
+
+func (e *Engine) Set(name string) *stats.Set {
+	s, ok := e.sets[name]
+	if !ok {
+		s = stats.NewSet(name)
+		e.sets[name] = s
+	}
+	return s
 }
