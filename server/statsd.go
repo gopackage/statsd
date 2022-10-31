@@ -8,30 +8,33 @@ import (
 
 	"github.com/apex/log"
 	"github.com/gopackage/statsd/stats"
+	"github.com/gopackage/statsd/web"
 )
 
 func New() *Engine {
 	return &Engine{
 		counters: make(map[string]*stats.Counter),
-		timers: make(map[string]*stats.Timer),
-		gauges: make(map[string]*stats.Gauge),
-		sets: make(map[string]*stats.Set),
+		timers:   make(map[string]*stats.Timer),
+		gauges:   make(map[string]*stats.Gauge),
+		sets:     make(map[string]*stats.Set),
 	}
 }
 
 // Engine implements the entire statsd server.
 type Engine struct {
-	conn *net.UDPConn
+	conn     *net.UDPConn
 	counters map[string]*stats.Counter
-	timers map[string]*stats.Timer
-	gauges map[string]*stats.Gauge
-	sets map[string]*stats.Set
-	resp *Resp
+	timers   map[string]*stats.Timer
+	gauges   map[string]*stats.Gauge
+	sets     map[string]*stats.Set
+	resp     *Resp
 }
 
 // Start begins accepting UDP stats packets from the network.
 // Start blocks until the server is stopped.
 func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
+	webServer := web.NewServer(httpAddr)
+	go webServer.Start()
 	addr, err := net.ResolveUDPAddr("udp", udpAddr)
 	if err != nil {
 		return err
@@ -92,7 +95,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 		value := parts[1]
 		isFloat := strings.Contains(value, ".")
 
-		l.WithFields(log.Fields{"sampling": sampling, "name":name, "value":value, "float": isFloat}).Info("parts")
+		l.WithFields(log.Fields{"sampling": sampling, "name": name, "value": value, "float": isFloat}).Info("parts")
 
 		switch kind {
 		case "c":
