@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/apex/log"
 	"github.com/gopackage/statsd/stats"
@@ -20,14 +21,20 @@ func New() *Engine {
 	}
 }
 
+type Listener interface {
+	Update(any) // Update receives an updated stat from the engine
+}
+
 // Engine implements the entire statsd server.
 type Engine struct {
-	conn     *net.UDPConn
-	counters map[string]*stats.Counter
-	timers   map[string]*stats.Timer
-	gauges   map[string]*stats.Gauge
-	sets     map[string]*stats.Set
-	resp     *Resp
+	conn      *net.UDPConn
+	counters  map[string]*stats.Counter
+	timers    map[string]*stats.Timer
+	gauges    map[string]*stats.Gauge
+	sets      map[string]*stats.Set
+	resp      *Resp
+	mux       sync.RWMutex
+	listeners []Listener
 }
 
 // Start begins accepting UDP stats packets from the network.
@@ -48,6 +55,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 
 	if len(respAddr) > 0 {
 		e.resp = NewResp(respAddr, e)
+		e.AddListener(e.resp)
 		go e.resp.Start()
 	}
 
@@ -106,6 +114,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 				continue
 			}
 			c.Add(int64(value))
+			e.notify(c)
 		case "ms":
 			t := e.Timer(name)
 			value, err := strconv.Atoi(value)
@@ -114,6 +123,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 				continue
 			}
 			t.Set(int64(value))
+			e.notify(t)
 		case "g":
 			g := e.Gauge(name)
 			value, err := strconv.Atoi(value)
@@ -122,6 +132,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 				continue
 			}
 			g.Set(int64(value))
+			e.notify(g)
 		case "s":
 			s := e.Set(name)
 			value, err := strconv.Atoi(value)
@@ -130,6 +141,7 @@ func (e *Engine) Start(udpAddr, tcpAddr, httpAddr, respAddr string) error {
 				continue
 			}
 			s.Add(int64(value))
+			e.notify(s)
 		default:
 			l.WithField("type", kind).Info("unknown type")
 		}
@@ -190,4 +202,19 @@ func (e *Engine) Set(name string) *stats.Set {
 		e.sets[name] = s
 	}
 	return s
+}
+
+// AddListener registers a listener to receive updates whenever a stat changes.
+func (e *Engine) AddListener(listener Listener) {
+	e.mux.Lock()
+	defer e.mux.Unlock()
+	e.listeners = append(e.listeners, listener)
+}
+
+func (e *Engine) notify(update any) {
+	e.mux.RLock()
+	defer e.mux.RUnlock()
+	for _, listener := range e.listeners {
+		listener.Update(update)
+	}
 }

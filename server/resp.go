@@ -1,24 +1,27 @@
 package server
 
 import (
+	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/apex/log"
+	"github.com/gopackage/statsd/stats"
 	"github.com/tidwall/redcon"
 	"github.com/tidwall/sjson"
 )
 
 func NewResp(respAddr string, engine *Engine) *Resp {
-	return &Resp{addr:respAddr, engine: engine}
+	return &Resp{addr: respAddr, engine: engine}
 }
 
 type Resp struct {
-	addr string
+	addr   string
 	engine *Engine
+	ps     redcon.PubSub
 }
 
 func (r *Resp) Start() {
-	var ps redcon.PubSub
 	var err error
 	go log.WithField("addr", r.addr).Info("started resp server")
 	err = redcon.ListenAndServe(r.addr,
@@ -83,7 +86,7 @@ func (r *Resp) Start() {
 					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
 					return
 				}
-				conn.WriteInt(ps.Publish(string(cmd.Args[1]), string(cmd.Args[2])))
+				conn.WriteInt(r.ps.Publish(string(cmd.Args[1]), string(cmd.Args[2])))
 			case "subscribe", "psubscribe":
 				if len(cmd.Args) < 2 {
 					conn.WriteError("ERR wrong number of arguments for '" + string(cmd.Args[0]) + "' command")
@@ -92,9 +95,9 @@ func (r *Resp) Start() {
 				command := strings.ToLower(string(cmd.Args[0]))
 				for i := 1; i < len(cmd.Args); i++ {
 					if command == "psubscribe" {
-						ps.Psubscribe(conn, string(cmd.Args[i]))
+						r.ps.Psubscribe(conn, string(cmd.Args[i]))
 					} else {
-						ps.Subscribe(conn, string(cmd.Args[i]))
+						r.ps.Subscribe(conn, string(cmd.Args[i]))
 					}
 				}
 			}
@@ -117,5 +120,23 @@ func (r *Resp) Start() {
 	)
 	if err != nil {
 		log.WithError(err).Warn("unexpected error with resp server")
+	}
+}
+
+// Update receives an update of a stat and publishes it to any subscribers.
+func (r *Resp) Update(update any) {
+	switch item := update.(type) {
+	case *stats.Counter:
+		r.ps.Publish(item.Name, strconv.Itoa(int(item.Count)))
+	case *stats.Gauge:
+		r.ps.Publish(item.Name, strconv.Itoa(int(item.Value)))
+	case *stats.Set:
+		data, err := json.Marshal(item.Buckets)
+		if err != nil {
+			log.WithError(err).Error("could not marshal buckets")
+		}
+		r.ps.Publish(item.Name, string(data))
+	case *stats.Timer:
+		r.ps.Publish(item.Name, strconv.Itoa(int(item.Time)))
 	}
 }
